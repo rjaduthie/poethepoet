@@ -1,3 +1,4 @@
+import os
 import re
 from typing import TYPE_CHECKING, Dict, Sequence, Tuple, Type, Union
 
@@ -52,6 +53,99 @@ class CmdTask(PoeTask):
         )
 
     def _resolve_args(self, context: "RunContext", env: "EnvVarsManager"):
+        if os.environ.get("POE_LEGACY_CMD_MODE"):
+            # TODO: get flags from config instead!
+            return self._resolve_args_legacy_mode(context, env)
+
+        from ..helpers.shell_tokenizer import (
+            CommandLineTokenizeError,
+            tokenize,
+            TokenFeatureType,
+            includes_glob,
+            TokenType,
+        )
+
+        try:
+            raw_tokens = tokenize(self.content)
+        except CommandLineTokenizeError as error:
+            raise PoeException(error.message) from CommandLineTokenizeError
+
+        # Filter tokens
+        tokens = []
+        for token in raw_tokens:
+            if token.type in (TokenType.CONTROL_OPERATOR, TokenType.REDIRECT_OPERATOR):
+                raise ExecutionError(
+                    f"Cannot execute cmd task with unsupported operator {token.content!r}"
+                )
+            if token.type == TokenType.COMMENT:
+                continue
+            for feature in token.expansions:
+                if feature.type == TokenFeatureType.COMMAND:
+                    raise ExecutionError(
+                        "Cannot execute cmd task with token including a command"
+                        f" expansion {token.content!r}"
+                    )
+                if feature.type == TokenFeatureType.ARITHMETIC:
+                    raise ExecutionError(
+                        "Cannot execute cmd task with token including a arithmetic"
+                        f" expansion {token.content!r}"
+                    )
+                if feature.type == TokenFeatureType.GROUP:
+                    raise ExecutionError(
+                        "Cannot execute cmd task with token including a command "
+                        f" group {token.content!r}"
+                    )
+
+            tokens.append(token)
+
+        # How to keep indices accurate? variable => tilde => glob (if there is any)
+        # split into parts?
+        #
+
+        # some complexity emerges because of the requirement to split tokens on
+        # whitespace that comes from unquoted parameter expansions
+
+        expanded_tokens = []
+        for token in tokens:
+            token_parts = []
+            cursor = 0
+            token_includes_glob = token.includes_glob
+            for feature in token.expansions:
+                token_parts.append(token.content[cursor : feature.start])
+
+                if feature.type == TokenFeatureType.VARIABLE:
+                    value = env.get(feature.content, default="")
+                    if includes_glob(value):
+                        token_includes_glob = True
+
+                    if not feature.quoted:
+                        while whitespace := re.match("", value):
+                            # split the resulting token on whitespace in the value
+                            token_parts.append(value[: whitespace.start()])
+                            expanded_tokens.append("".join(token_parts))
+                            token_parts = []
+                            value = value[whitespace.end() :]
+
+                    token_parts.append(value)
+
+                    # TODO: escape glob chars if they're quoted or escaped in
+                    #       value and token has glob or if value has unescaped glob !!
+                    # -
+
+                elif feature.type == TokenFeatureType.TILDE:
+                    home_dir = os.environ.get("HOME")
+                    if feature.content == "~" and home_dir:
+                        token_parts.append(home_dir)
+                    else:
+                        # ignore advanced tilde expansions
+                        token_parts.append(feature.content)
+
+                cursor = feature.end
+
+                # MAYBE glob start chars should be features!?!
+                #   any better way to iterate expansions and globs together?
+
+    def _resolve_args_legacy_mode(self, context: "RunContext", env: "EnvVarsManager"):
         import shlex
         from glob import glob
 

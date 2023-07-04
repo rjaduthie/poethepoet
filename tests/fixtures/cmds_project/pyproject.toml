@@ -14,6 +14,11 @@ args = ["formal-greeting", "subject"]
 cmd = "poe_test_echo $WORD is the word"
 env = { WORD = "${SOME_INPUT_VAR}"}
 
+[tool.poe.tasks.globs-quotes]
+cmd = "poe_test_echo 'there *' a'*'b and * !"
+env = { WORD = "${SOME_INPUT_VAR}"}
+
+
 [tool.poe.tasks.multiple-value-arg]
 cmd = "poe_test_echo \"first: ${first} second: ${second}\""
 

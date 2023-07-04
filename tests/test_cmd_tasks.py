@@ -63,3 +63,12 @@ def test_cmd_task_with_cwd_option(run_poe_subproc, poe_project_path):
         == f'{poe_project_path.joinpath("tests", "fixtures", "cwd_project", "subdir", "foo")}\n'
     )
     assert result.stderr == ""
+
+
+def test_task_with_quotes(run_poe_subproc, projects, esc_prefix):
+    result = run_poe_subproc("echo", "foo", "!", project="cmds")
+    assert (
+        result.capture == f"Poe => poe_test_echo 'there *' a'*'b and pyproject.toml !\n"
+    )
+    assert result.stdout == f"there * a*b and pyproject.toml !\n"
+    assert result.stderr == ""
